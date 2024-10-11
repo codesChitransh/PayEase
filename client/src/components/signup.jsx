@@ -14,7 +14,7 @@ function Signup() {
 
   const handleSubmit = async (e) => {
     e.preventDefault(); 
-    const url = "http://localhost:3005/signup"; 
+    const url = "http://localhost:3006/signup"; 
 
     try {
       const res = await axios.post(url, { name, username, password, mobile });

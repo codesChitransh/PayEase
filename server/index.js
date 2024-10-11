@@ -4,7 +4,9 @@ import cors from 'cors';
 import { User } from './models/user.js';
 import { Bank } from './models/bank.js';
 import { Transaction } from './models/transaction.js'; 
+import dotenv from "dotenv"
 
+dotenv.config();
 const port = 3005;
 const app = express();
 
@@ -14,7 +16,8 @@ app.use(cors());
 
 
 mongoose
-  .connect('mongodb+srv://echitranshsrivastava:GrXyVPlq8pdPFEuN@cluster-1.zkjaygh.mongodb.net/payease')
+  .connect(process.env.MONGO_URI, {
+  })
   .then(() => {
     console.log('Connected to MongoDB');
   })
@@ -83,39 +86,47 @@ app.get('/users', async (req, res) => {
 app.post('/pay', async (req, res) => {
   const { payerUsername, receiverUsername, amount } = req.body;
 
+  const session = await mongoose.startSession(); 
+  session.startTransaction(); 
+
   try {
-    const payer = await User.findOne({ username: payerUsername });
-    const receiver = await User.findOne({ username: receiverUsername });
+    const payer = await User.findOne({ username: payerUsername }).session(session);
+    const receiver = await User.findOne({ username: receiverUsername }).session(session);
 
     if (!payer || !receiver) {
+      await session.abortTransaction();   
+      session.endSession();
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    const payerAccount = await Bank.findOne({ userId: payer._id });
-    const receiverAccount = await Bank.findOne({ userId: receiver._id });
+    const payerAccount = await Bank.findOne({ userId: payer._id }).session(session);
+    const receiverAccount = await Bank.findOne({ userId: receiver._id }).session(session);
 
     if (!payerAccount || !receiverAccount) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(404).json({ success: false, message: 'Bank account not found' });
     }
 
     const transferAmount = Number(amount);
 
     if (payerAccount.balance < transferAmount) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ success: false, message: 'Insufficient balance' });
     }
 
     payerAccount.balance -= transferAmount;
     receiverAccount.balance += transferAmount;
 
-    await payerAccount.save();
-    await receiverAccount.save();
+    await payerAccount.save({ session });
+    await receiverAccount.save({ session });
 
-  
-    await Transaction.create({
-      payerUsername,
-      receiverUsername,
-      amount: transferAmount,
-    });
+    await Transaction.create([{ payerUsername, receiverUsername, amount: transferAmount }], { session });
+
+    
+    await session.commitTransaction();
+    session.endSession();
 
     res.json({
       success: true,
@@ -124,6 +135,9 @@ app.post('/pay', async (req, res) => {
       receiver: { username: receiverUsername, balance: receiverAccount.balance },
     });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
     res.status(500).json({ success: false, message: err.message });
   }
 });
